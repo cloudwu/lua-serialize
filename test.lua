@@ -16,4 +16,10 @@ function pr(t,...)
 	print(...)
 end
 
+print ("------")
+
+local seri, length = s.serialize(a)
+print(seri, length)
+
+pr(s.unpack(seri))
 pr(s.unpack(a))

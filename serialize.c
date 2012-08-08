@@ -35,6 +35,7 @@ struct write_block {
 };
 
 struct read_block {
+	struct block * head;
 	struct block * current;
 	int len;
 	int ptr;
@@ -117,6 +118,11 @@ wb_free(struct write_block *wb) {
 static int
 rb_init(struct read_block *rb, struct block *b) {
 	rb->current = b;
+	if (b->next == NULL) {
+		rb->head = b;
+	} else {
+		rb->head = NULL;
+	}
 	memcpy(&(rb->len),b->buffer,sizeof(rb->len));
 	rb->ptr = sizeof(rb->len);
 	rb->len -= rb->ptr;
@@ -131,8 +137,12 @@ rb_read(struct read_block *rb, void *buffer, int sz) {
 
 	if (rb->ptr == BLOCK_SIZE) {
 		struct block * next = rb->current->next;
-		free(rb->current);
-		rb->current = next;
+		if (next == NULL) {
+			++rb->current;
+		} else {
+			free(rb->current);
+			rb->current = next;
+		}
 		rb->ptr = 0;
 	}
 
@@ -154,8 +164,12 @@ rb_read(struct read_block *rb, void *buffer, int sz) {
 
 	for (;;) {
 		struct block * next = rb->current->next;
-		free(rb->current);
-		rb->current = next;
+		if (next == NULL) {
+			++rb->current;
+		} else {
+			free(rb->current);
+			rb->current = next;
+		}
 
 		if (sz < BLOCK_SIZE) {
 			memcpy(tmp, rb->current->buffer, sz);
@@ -172,10 +186,14 @@ rb_read(struct read_block *rb, void *buffer, int sz) {
 
 static void
 rb_close(struct read_block *rb) {
-	while (rb->current) {
-		struct block * next = rb->current->next;
-		free(rb->current);
-		rb->current = next;
+	if (rb->head) {
+		free(rb->head);
+	} else {
+		while (rb->current) {
+			struct block * next = rb->current->next;
+			free(rb->current);
+			rb->current = next;
+		}
 	}
 	rb->len = 0;
 	rb->ptr = 0;
@@ -569,12 +587,39 @@ _dump(lua_State *L) {
 	return 0;
 }
 
+static int
+_serialize(lua_State *L) {
+	struct block * blk = lua_touserdata(L,1);
+	if (blk == NULL) {
+		return luaL_error(L, "Need a block to unpack");
+	}
+	int len = 0;
+	memcpy(&len, blk->buffer ,sizeof(len));
+	int block = (len + sizeof(*blk) - 1) / sizeof(*blk);
+
+	struct block * seri = malloc(len + block * sizeof(blk->next));
+	int i;
+	for (i=0;i<block-1;i++) {
+		seri[i].next = NULL;
+		memcpy(seri[i].buffer, blk->buffer, BLOCK_SIZE);
+		blk = blk->next;
+	}
+	seri[i].next = NULL;
+	memcpy(seri[i].buffer, blk->buffer, len - (block-1) * BLOCK_SIZE);
+	
+	lua_pushlightuserdata(L, seri);
+	lua_pushinteger(L, len + block * sizeof(blk->next));
+
+	return 2;
+}
+
 int
 luaopen_serialize(lua_State *L) {
 	luaL_Reg l[] = {
 		{ "pack", _pack },
 		{ "unpack", _unpack },
 		{ "append", _append },
+		{ "serialize", _serialize },
 		{ "dump", _dump },
 		{ NULL, NULL },
 	};

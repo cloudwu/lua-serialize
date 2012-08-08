@@ -11,4 +11,8 @@
 	-- unpack extract ... from bin, and free the memory. 
 	-- You can only unpack binary block once.
 	serialize.unpack(bin)
+
+	-- You can use serialize.serialize(bin) to serialize them to one block
+	-- You can send the block to the other process.
+	local block, length = serialize.serialize(bin)
 ```
