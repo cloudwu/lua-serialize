@@ -15,4 +15,5 @@
 	-- You can use serialize.serialize(bin) to serialize them to one block
 	-- You can send the block to the other process.
 	local block, length = serialize.serialize(bin)
+	serialize.deserialize(block)
 ```

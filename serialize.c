@@ -35,7 +35,7 @@ struct write_block {
 };
 
 struct read_block {
-	struct block * head;
+	char * buffer;
 	struct block * current;
 	int len;
 	int ptr;
@@ -115,14 +115,21 @@ wb_free(struct write_block *wb) {
 	wb->len = 0;
 }
 
+static void
+rball_init(struct read_block * rb, char * buffer) {
+	rb->buffer = buffer;
+	rb->current = NULL;
+	uint8_t header[4];
+	memcpy(header,buffer,4);
+	rb->len = header[0] | header[1] <<8 | header[2] << 16 | header[3] << 24;
+	rb->ptr = 4;
+	rb->len -= rb->ptr;
+}
+
 static int
 rb_init(struct read_block *rb, struct block *b) {
+	rb->buffer = NULL;
 	rb->current = b;
-	if (b->next == NULL) {
-		rb->head = b;
-	} else {
-		rb->head = NULL;
-	}
 	memcpy(&(rb->len),b->buffer,sizeof(rb->len));
 	rb->ptr = sizeof(rb->len);
 	rb->len -= rb->ptr;
@@ -135,14 +142,17 @@ rb_read(struct read_block *rb, void *buffer, int sz) {
 		return NULL;
 	}
 
+	if (rb->buffer) {
+		int ptr = rb->ptr;
+		rb->ptr += sz;
+		rb->len -= sz;
+		return rb->buffer + ptr;
+	}
+
 	if (rb->ptr == BLOCK_SIZE) {
 		struct block * next = rb->current->next;
-		if (next == NULL) {
-			++rb->current;
-		} else {
-			free(rb->current);
-			rb->current = next;
-		}
+		free(rb->current);
+		rb->current = next;
 		rb->ptr = 0;
 	}
 
@@ -164,12 +174,8 @@ rb_read(struct read_block *rb, void *buffer, int sz) {
 
 	for (;;) {
 		struct block * next = rb->current->next;
-		if (next == NULL) {
-			++rb->current;
-		} else {
-			free(rb->current);
-			rb->current = next;
-		}
+		free(rb->current);
+		rb->current = next;
 
 		if (sz < BLOCK_SIZE) {
 			memcpy(tmp, rb->current->buffer, sz);
@@ -186,14 +192,10 @@ rb_read(struct read_block *rb, void *buffer, int sz) {
 
 static void
 rb_close(struct read_block *rb) {
-	if (rb->head) {
-		free(rb->head);
-	} else {
-		while (rb->current) {
-			struct block * next = rb->current->next;
-			free(rb->current);
-			rb->current = next;
-		}
+	while (rb->current) {
+		struct block * next = rb->current->next;
+		free(rb->current);
+		rb->current = next;
 	}
 	rb->len = 0;
 	rb->ptr = 0;
@@ -398,10 +400,15 @@ _append(lua_State *L) {
 
 
 static inline void
-_invalid_stream(lua_State *L, struct read_block *rb) {
-	rb_close(rb);
-	luaL_error(L, "Invalid serialize stream");
+__invalid_stream(lua_State *L, struct read_block *rb, int line) {
+	int len = rb->len;
+	if (rb->buffer == NULL) {
+		rb_close(rb);
+	}
+	luaL_error(L, "Invalid serialize stream %d (line:%d)", len, line);
 }
+
+#define _invalid_stream(L,rb) __invalid_stream(L,rb,__LINE__)
 
 static double
 _get_number(lua_State *L, struct read_block *rb, int cookie) {
@@ -589,28 +596,66 @@ _dump(lua_State *L) {
 
 static int
 _serialize(lua_State *L) {
-	struct block * blk = lua_touserdata(L,1);
-	if (blk == NULL) {
-		return luaL_error(L, "Need a block to unpack");
+	struct block *b = lua_touserdata(L,1);
+	if (b==NULL) {
+		return luaL_error(L, "dump null pointer");
 	}
-	int len = 0;
-	memcpy(&len, blk->buffer ,sizeof(len));
-	int block = (len + sizeof(*blk) - 1) / sizeof(*blk);
 
-	struct block * seri = malloc(len + block * sizeof(blk->next));
-	int i;
-	for (i=0;i<block-1;i++) {
-		seri[i].next = NULL;
-		memcpy(seri[i].buffer, blk->buffer, BLOCK_SIZE);
-		blk = blk->next;
+	uint32_t len = 0;
+	memcpy(&len, b->buffer ,sizeof(len));
+
+	uint8_t * buffer = malloc(len);
+	uint8_t * ptr = buffer;
+	int sz = len;
+	while(len>0) {
+		if (len >= BLOCK_SIZE) {
+			memcpy(ptr, b->buffer, BLOCK_SIZE);
+			ptr += BLOCK_SIZE;
+			len -= BLOCK_SIZE;
+		} else {
+			memcpy(ptr, b->buffer, len);
+			break;
+		}
+		b = b->next;
 	}
-	seri[i].next = NULL;
-	memcpy(seri[i].buffer, blk->buffer, len - (block-1) * BLOCK_SIZE);
+
+	buffer[0] = sz & 0xff;
+	buffer[1] = (sz>>8) & 0xff;
+	buffer[2] = (sz>>16) & 0xff;
+	buffer[3] = (sz>>24) & 0xff;
 	
-	lua_pushlightuserdata(L, seri);
-	lua_pushinteger(L, len + block * sizeof(blk->next));
+	lua_pushlightuserdata(L, buffer);
+	lua_pushinteger(L, sz);
 
 	return 2;
+}
+
+static int
+_deserialize(lua_State *L) {
+	void * buffer = lua_touserdata(L,1);
+	if (buffer == NULL) {
+		return luaL_error(L, "deserialize null pointer");
+	}
+
+	lua_settop(L,0);
+	struct read_block rb;
+	rball_init(&rb, buffer);
+
+	int i;
+	for (i=0;;i++) {
+		if (i%16==15) {
+			lua_checkstack(L,i);
+		}
+		uint8_t type = 0;
+		uint8_t *t = rb_read(&rb, &type, 1);
+		if (t==NULL)
+			break;
+		_push_value(L, &rb, *t & 0x7, *t>>3);
+	}
+
+	// Need not free buffer
+
+	return lua_gettop(L);
 }
 
 int
@@ -620,6 +665,7 @@ luaopen_serialize(lua_State *L) {
 		{ "unpack", _unpack },
 		{ "append", _append },
 		{ "serialize", _serialize },
+		{ "deserialize", _deserialize },
 		{ "dump", _dump },
 		{ NULL, NULL },
 	};
