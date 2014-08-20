@@ -644,14 +644,8 @@ _serialize(lua_State *L) {
 	return 2;
 }
 
-static int
-_deserialize(lua_State *L) {
-	void * buffer = lua_touserdata(L,1);
-	if (buffer == NULL) {
-		return luaL_error(L, "deserialize null pointer");
-	}
-
-	lua_settop(L,0);
+static void
+deserialize_buffer(lua_State *L, void * buffer) {
 	struct read_block rb;
 	rball_init(&rb, buffer);
 
@@ -666,10 +660,42 @@ _deserialize(lua_State *L) {
 			break;
 		_push_value(L, &rb, *t & 0x7, *t>>3);
 	}
+}
+
+static int
+_deserialize(lua_State *L) {
+	void * buffer = lua_touserdata(L,1);
+	if (buffer == NULL) {
+		return luaL_error(L, "deserialize null pointer");
+	}
+
+	lua_settop(L,0);
+	deserialize_buffer(L, buffer);
 
 	// Need not free buffer
 
 	return lua_gettop(L);
+}
+
+static int
+seristring(lua_State *L) {
+	_pack(L);
+	lua_replace(L, 1);
+	lua_settop(L, 1);
+	_serialize(L);
+	void *buffer = lua_touserdata(L, -2);
+	int sz = lua_tointeger(L, -1);
+	lua_pushlstring(L, buffer, sz);
+	free(buffer);
+	return 1;
+}
+
+static int
+deseristring(lua_State *L) {
+	const char * buffer = luaL_checkstring(L, 1);
+	deserialize_buffer(L, (void *)buffer);
+
+	return lua_gettop(L) - 1;
 }
 
 int
@@ -680,6 +706,8 @@ luaopen_serialize(lua_State *L) {
 		{ "append", _append },
 		{ "serialize", _serialize },
 		{ "deserialize", _deserialize },
+		{ "serialize_string", seristring },
+		{ "deseristring_string", deseristring },
 		{ "dump", _dump },
 		{ NULL, NULL },
 	};

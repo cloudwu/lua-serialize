@@ -1,5 +1,14 @@
 s = require "serialize"
 
+b = s.pack{[10] = {1,2}}
+s.dump(b)
+bb = s.unpack(b)
+for k,v in pairs(bb[10]) do
+	print(k,v)
+end
+
+--[[
+
 a = s.pack { hello={3,4}, false, 1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9 }
 
 s.dump(a)
@@ -26,3 +35,7 @@ pr(s.unpack(a))
 print("-------")
 
 pr(s.deserialize(seri))
+]]
+
+a = s.serialize_string( 1,2,3,4,5 )
+print(#a, s.deseristring_string(a))
