@@ -340,12 +340,24 @@ wb_table_hash(lua_State *L, struct write_block * wb, int index, int depth, int a
 
 static void
 wb_table(lua_State *L, struct write_block *wb, int index, int depth) {
+	luaL_checkstack(L,LUA_MINSTACK,NULL);
 	if (index < 0) {
 		index = lua_gettop(L) + index + 1;
 	}
 	int array_size = wb_table_array(L, wb, index, depth);
 	wb_table_hash(L, wb, index, depth, array_size);
 }
+
+#if LUA_VERSION_NUM < 503
+
+static int
+lua_isinteger(lua_State *L, int index) {
+	int32_t x = (int32_t)lua_tointeger(L,index);
+	lua_Number n = lua_tonumber(L,index);
+	return ((lua_Number)x==n);
+}
+
+#endif
 
 static void
 pack_one(lua_State *L, struct write_block *b, int index, int depth) {
@@ -517,6 +529,7 @@ unpack_table(lua_State *L, struct read_block *rb, int array_size) {
 		}
 		array_size = get_integer(L,rb,cookie);
 	}
+	luaL_checkstack(L,LUA_MINSTACK,NULL);
 	lua_createtable(L,array_size,0);
 	int i;
 	for (i=1;i<=array_size;i++) {
@@ -614,8 +627,8 @@ lunpack(lua_State *L) {
 
 	int i;
 	for (i=0;;i++) {
-		if (i%16==15) {
-			lua_checkstack(L,i);
+		if (i%8==7) {
+			luaL_checkstack(L,LUA_MINSTACK,NULL);
 		}
 		uint8_t type = 0;
 		uint8_t *t = rb_read(&rb, &type, 1);
