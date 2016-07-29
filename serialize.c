@@ -741,10 +741,14 @@ ldeserialize(lua_State *L) {
 
 static int
 seristring(lua_State *L) {
-	lpack(L);
-	lua_replace(L, 1);
-	lua_settop(L, 1);
+	struct write_block b;
+	wb_init(&b, NULL);
+	pack_from(L,&b,0);
+	struct block * ret = wb_close(&b);
+	lua_settop(L,0);
+	lua_pushlightuserdata(L,ret);
 	lserialize(L);
+	wb_free(&b);
 	void *buffer = lua_touserdata(L, -2);
 	int sz = lua_tointeger(L, -1);
 	lua_pushlstring(L, buffer, sz);
